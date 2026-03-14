@@ -20,6 +20,11 @@ type SessionState struct {
 	RefreshToken   string    `json:"refresh_token"`
 	IsAuthorized   bool      `json:"is_authorized"`
 	TokenExpiresIn int       `json:"token_expires_in"`
+
+	// Not serialized - only relevant for in-memory session caching.
+	// Avoids expensive JWT signature verification on every request.
+	LastValidatedAt time.Time              `json:"-"`
+	CachedClaims    map[string]interface{} `json:"-"`
 }
 
 func GenerateSessionId() string {

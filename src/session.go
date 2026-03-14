@@ -1,6 +1,7 @@
 package src
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -12,6 +13,14 @@ import (
 	"github.com/sevensolutions/traefik-oidc-auth/src/session"
 	"github.com/sevensolutions/traefik-oidc-auth/src/utils"
 )
+
+// SessionCookiePayload is the JSON structure stored (encrypted) in the client cookie.
+// It contains the session storage ticket plus an optional refresh token,
+// enabling session recovery after in-memory storage is lost (e.g., server restart).
+type SessionCookiePayload struct {
+	Ticket       string `json:"t"`
+	RefreshToken string `json:"rt,omitempty"`
+}
 
 func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.SessionState, bool, map[string]interface{}, error) {
 	// Use AuthorizationHeader, if present
@@ -91,13 +100,33 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 }
 
 func validateSessionTicket(toa *TraefikOidcAuth, encryptedTicket string) (*session.SessionState, map[string]interface{}, *session.SessionState, error) {
-	plainSessionTicket, err := utils.Decrypt(encryptedTicket, toa.Config.Secret)
+	plainText, err := utils.Decrypt(encryptedTicket, toa.Config.Secret)
 	if err != nil {
 		toa.logger.Log(logging.LevelError, "Failed to decrypt session ticket: %v", err.Error())
 		return nil, nil, nil, err
 	}
 
-	session, err := toa.SessionStorage.TryGetSession(plainSessionTicket)
+	// Parse cookie payload (new JSON format with ticket + refresh token).
+	// Falls back to legacy format (raw ticket) for backward compatibility.
+	var payload SessionCookiePayload
+	ticket := plainText
+	cookieRefreshToken := ""
+
+	if jsonErr := json.Unmarshal([]byte(plainText), &payload); jsonErr == nil && payload.Ticket != "" {
+		ticket = payload.Ticket
+		cookieRefreshToken = payload.RefreshToken
+	}
+
+	session, err := toa.SessionStorage.TryGetSession(ticket)
+
+	// If session not found but we have a refresh token from the cookie, attempt recovery.
+	// This handles the case where in-memory sessions are lost (server restart)
+	// without redirecting clients to OIDC.
+	if (err != nil || session == nil) && cookieRefreshToken != "" {
+		toa.logger.Log(logging.LevelInfo, "Session not found in storage. Attempting recovery using refresh token from cookie...")
+		return toa.recoverSessionFromRefreshToken(cookieRefreshToken)
+	}
+
 	if err != nil {
 		toa.logger.Log(logging.LevelError, "Reading session failed: %v", err.Error())
 		return nil, nil, nil, err
@@ -105,6 +134,16 @@ func validateSessionTicket(toa *TraefikOidcAuth, encryptedTicket string) (*sessi
 	if session == nil {
 		toa.logger.Log(logging.LevelDebug, "No session found")
 		return nil, nil, nil, nil
+	}
+
+	// Fast path: skip expensive token validation if recently validated and token not expiring soon.
+	// This avoids repeated JWT signature verification and/or introspection calls on every request.
+	if !session.LastValidatedAt.IsZero() &&
+		time.Since(session.LastValidatedAt) < 30*time.Second &&
+		session.CachedClaims != nil &&
+		!checkIdpTokenExpiresSoon(toa, session) {
+		toa.logger.Log(logging.LevelDebug, "Using cached validation result (validated %s ago)", time.Since(session.LastValidatedAt).Round(time.Second))
+		return session, session.CachedClaims, nil, nil
 	}
 
 	success, claims, err := toa.validateToken(session)
@@ -156,6 +195,10 @@ func validateSessionTicket(toa *TraefikOidcAuth, encryptedTicket string) (*sessi
 			session.RefreshedAt = time.Now()
 			session.TokenExpiresIn = newTokens.ExpiresIn
 
+			// Cache the validation result
+			session.LastValidatedAt = time.Now()
+			session.CachedClaims = claims
+
 			toa.logger.Log(logging.LevelInfo, "Successfully renewed session")
 
 			return session, claims, session, err
@@ -167,7 +210,58 @@ func validateSessionTicket(toa *TraefikOidcAuth, encryptedTicket string) (*sessi
 		}
 	}
 
+	// Cache the validation result
+	session.LastValidatedAt = time.Now()
+	session.CachedClaims = claims
+
 	return session, claims, nil, nil
+}
+
+// recoverSessionFromRefreshToken creates a new session by using a refresh token
+// from the client cookie. This handles the case where server-side session storage
+// has been lost (e.g., in-memory storage after a server restart) but the client
+// still holds a valid refresh token.
+func (toa *TraefikOidcAuth) recoverSessionFromRefreshToken(refreshToken string) (*session.SessionState, map[string]interface{}, *session.SessionState, error) {
+	newTokens, err := toa.renewToken(refreshToken)
+	if err != nil {
+		toa.logger.Log(logging.LevelError, "Session recovery failed: %s", err.Error())
+		return nil, nil, nil, fmt.Errorf("session recovery failed: %s", err.Error())
+	}
+
+	// Create a new session with the refreshed tokens
+	newSession := &session.SessionState{
+		Id:             session.GenerateSessionId(),
+		RefreshedAt:    time.Now(),
+		AccessToken:    newTokens.AccessToken,
+		IdToken:        newTokens.IdToken,
+		TokenExpiresIn: newTokens.ExpiresIn,
+	}
+
+	if newTokens.RefreshToken != "" {
+		newSession.RefreshToken = newTokens.RefreshToken
+	} else {
+		// Keep the old refresh token if provider didn't rotate it
+		newSession.RefreshToken = refreshToken
+	}
+
+	// Validate the new tokens
+	success, claims, err := toa.validateToken(newSession)
+	if !success || err != nil {
+		toa.logger.Log(logging.LevelError, "Failed to validate recovered session: %v", err)
+		return nil, nil, nil, fmt.Errorf("session recovery validation failed: %v", err)
+	}
+
+	// Evaluate authorization with the new claims
+	newSession.IsAuthorized = isAuthorized(toa.logger, toa.Config.Authorization, claims)
+
+	// Cache the validation result
+	newSession.LastValidatedAt = time.Now()
+	newSession.CachedClaims = claims
+
+	toa.logger.Log(logging.LevelInfo, "Successfully recovered session from refresh token. New session Id: %s", newSession.Id)
+
+	// Return as updatedSession to trigger cookie update + session storage write
+	return newSession, claims, newSession, nil
 }
 
 func checkIdpTokenExpiresSoon(toa *TraefikOidcAuth, session *session.SessionState) bool {
@@ -240,14 +334,27 @@ func (toa *TraefikOidcAuth) storeSessionAndAttachCookie(session *session.Session
 
 	toa.logger.Log(logging.LevelDebug, "Session stored. Id %s", session.Id)
 
-	encryptedSessionTicket, err := utils.Encrypt(sessionTicket, toa.Config.Secret)
+	// Build the cookie payload: session ticket + refresh token for recovery
+	payload := SessionCookiePayload{
+		Ticket:       sessionTicket,
+		RefreshToken: session.RefreshToken,
+	}
+
+	payloadJson, err := json.Marshal(payload)
 	if err != nil {
-		toa.logger.Log(logging.LevelError, "Failed to encrypt session ticket: %s", err.Error())
+		toa.logger.Log(logging.LevelError, "Failed to marshal session cookie payload: %s", err.Error())
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	setChunkedCookies(toa.Config, rw, getSessionCookieName(toa.Config), encryptedSessionTicket)
+	encryptedPayload, err := utils.Encrypt(string(payloadJson), toa.Config.Secret)
+	if err != nil {
+		toa.logger.Log(logging.LevelError, "Failed to encrypt session cookie payload: %s", err.Error())
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	setChunkedCookies(toa.Config, rw, getSessionCookieName(toa.Config), encryptedPayload)
 }
 
 func createSessionCookie(config *Config) *http.Cookie {
