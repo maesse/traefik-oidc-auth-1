@@ -38,6 +38,7 @@ But: If you're using YAML-files for configuration you can use [traefik's templat
 | `PostLogoutRedirectUri`* | no | `string` | `/` | The url where the user should be redirected after logout. |
 | `ValidPostLogoutRedirectUris` | no | `string[]` | *none* | A list of valid redirect uris when provided by the *redirect_uri* query parameter on the logout-endpoint. The uri has to match exactly. Optionally you can use a `*` to match any character of `a-z, A-Z, 0-9, -, _`. You can also specify a single `*` which is a full wildcard but this is not recommended. |
 | `CookieNamePrefix`* | no | `string` | `TraefikOidcAuth` | Specifies the prefix for all cookies used internally by the plugin. The final names are concatenated using dot-notation. Eg. `TraefikOidcAuth.Session`, `TraefikOidcAuth.CodeVerifier` etc. Please note that this prefix does not apply to *AuthorizationCookie* where the name can be set individually. |
+| `SessionStorage` | no | [`SessionStorage`](#session-storage) | *none* | Session Storage Configuration. See *SessionStorage* block. |
 | `SessionCookie` | no | [`SessionCookie`](#session-cookie) | *none* | SessionCookie Configuration. See *SessionCookieConfig* block. |
 | `AuthorizationHeader` | no | [`AuthorizationHeader`](#authorization-header) | *none* | AuthorizationHeader Configuration. See *AuthorizationHeader* block. |
 | `AuthorizationCookie` | no | [`AuthorizationCookie`](#authorization-cookie) | *none* | AuthorizationCookie Configuration. See *AuthorizationCookie* block. |
@@ -77,6 +78,21 @@ When `CheckOnEveryRequest` is enabled, this will greatly increase the hit rate o
 
 :::info
 **Claims Merging Behavior**: When `UseClaimsFromUserInfo` is enabled, claims from the userinfo endpoint are merged directly into the token claims. Security-critical JWT claims (`iss`, `aud`, `exp`, `iat`, `nbf`, `jti`, `azp`) are protected and cannot be overwritten by userinfo data. All other claims from userinfo will override corresponding token claims, allowing you to access updated profile information directly via `{{ .claims.* }}` templates.
+:::
+
+## SessionStorage Block {#session-storage}
+
+Controls where session state is stored.
+
+| Name | Required | Type | Default | Description |
+|---|---|---|---|---|
+| `Type` | no | `string` | `cookie` | The session storage backend. `cookie` stores the full session (encrypted) in the browser cookie (default, stateless). `memory` stores only a session ID in the cookie and keeps the session state in server memory (smaller cookies, but sessions are lost on restart and not shared across instances). |
+
+:::warning
+When using `memory` storage, sessions are stored in the Traefik instance's memory. This means:
+- **Sessions are lost on restart** — all users will need to re-authenticate.
+- **Not shared across instances** — if you run multiple Traefik replicas, a user's session will only be valid on the instance that created it. Use sticky sessions or a single instance.
+- The session TTL is derived from `SessionCookie.MaxAge`. If `MaxAge` is `0` (ephemeral cookie), the in-memory TTL defaults to 3600 seconds (1 hour).
 :::
 
 ## SessionCookie Block {#session-cookie}

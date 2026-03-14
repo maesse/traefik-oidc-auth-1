@@ -458,6 +458,14 @@ func (toa *TraefikOidcAuth) handleCallback(rw http.ResponseWriter, req *http.Req
 func (toa *TraefikOidcAuth) handleLogout(rw http.ResponseWriter, req *http.Request, session *session.SessionState) {
 	toa.logger.Log(logging.LevelInfo, "Logging out...")
 
+	// Delete server-side session (no-op for cookie-based storage)
+	if err := toa.SessionStorage.DeleteSession(session.Id); err != nil {
+		toa.logger.Log(logging.LevelWarn, "Failed to delete server-side session: %s", err.Error())
+	}
+
+	// Clear the session cookie
+	clearChunkedCookie(toa.Config, rw, req, getSessionCookieName(toa.Config))
+
 	// https://openid.net/specs/openid-connect-rpinitiated-1_0.html
 
 	endSessionURL, err := url.Parse(toa.DiscoveryDocument.EndSessionEndpoint)

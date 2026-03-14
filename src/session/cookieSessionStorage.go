@@ -26,3 +26,8 @@ func (storage *CookieSessionStorage) TryGetSession(sessionTicket string) (*Sessi
 
 	return state, nil
 }
+
+func (storage *CookieSessionStorage) DeleteSession(sessionId string) error {
+	// No-op: cookie-based sessions are deleted by clearing the cookie on the client side.
+	return nil
+}

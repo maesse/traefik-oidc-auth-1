@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -50,6 +51,7 @@ type Config struct {
 	ValidPostLogoutRedirectUris []string `json:"valid_post_logout_redirect_uris"`
 
 	CookieNamePrefix     string                     `json:"cookie_name_prefix"`
+	SessionStorage       *SessionStorageConfig      `json:"session_storage"`
 	SessionCookie        *SessionCookieConfig       `json:"session_cookie"`
 	AuthorizationHeader  *AuthorizationHeaderConfig `json:"authorization_header"`
 	AuthorizationCookie  *AuthorizationCookieConfig `json:"authorization_cookie"`
@@ -98,6 +100,11 @@ type ProviderConfig struct {
 
 	UseClaimsFromUserInfo     string `json:"use_claims_from_user_info"`
 	UseClaimsFromUserInfoBool bool   `json:"use_claims_from_user_info_bool"`
+}
+
+type SessionStorageConfig struct {
+	// "cookie" or "memory". Default: "cookie".
+	Type string `json:"type"`
 }
 
 type SessionCookieConfig struct {
@@ -157,6 +164,9 @@ func CreateConfig() *Config {
 		LogoutUri:             "/logout",
 		PostLogoutRedirectUri: "/",
 		CookieNamePrefix:      "TraefikOidcAuth",
+		SessionStorage: &SessionStorageConfig{
+			Type: "cookie",
+		},
 		SessionCookie: &SessionCookieConfig{
 			Path:     "/",
 			Domain:   "",
@@ -371,6 +381,26 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 
 	logger.Log(logging.LevelInfo, "Configuration loaded successfully, starting OIDC Auth middleware...")
 
+	var sessionStorage session.SessionStorage
+	storageType := "cookie"
+	if config.SessionStorage != nil && config.SessionStorage.Type != "" {
+		storageType = config.SessionStorage.Type
+	}
+	switch storageType {
+	case "memory":
+		maxAge := config.SessionCookie.MaxAge
+		if maxAge <= 0 {
+			maxAge = 3600 // default 1 hour for in-memory sessions
+		}
+		sessionStorage = session.CreateInMemorySessionStorage(maxAge)
+		logger.Log(logging.LevelInfo, "Using in-memory session storage (max_age=%ds)", maxAge)
+	case "cookie":
+		sessionStorage = session.CreateCookieSessionStorage()
+		logger.Log(logging.LevelInfo, "Using cookie-based session storage")
+	default:
+		return nil, fmt.Errorf("invalid session_storage.type: %q (must be \"cookie\" or \"memory\")", storageType)
+	}
+
 	return &TraefikOidcAuth{
 		logger:                   logger,
 		next:                     next,
@@ -379,7 +409,7 @@ func New(uctx context.Context, next http.Handler, config *Config, name string) (
 		ClientJwtPrivateKey:      clientAssertionPrivateKey,
 		CallbackURL:              parsedCallbackURL,
 		Config:                   config,
-		SessionStorage:           session.CreateCookieSessionStorage(),
+		SessionStorage:           sessionStorage,
 		BypassAuthenticationRule: conditionalAuth,
 	}, nil
 }
