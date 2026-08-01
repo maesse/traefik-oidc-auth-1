@@ -8,9 +8,13 @@ import (
 	"github.com/sevensolutions/traefik-oidc-auth/src/logging"
 )
 
+// SessionStorage owns the contents of the opaque ticket transported in the
+// session cookie. Implementations may put the complete session in the ticket or
+// use it as a reference to state stored elsewhere.
 type SessionStorage interface {
 	StoreSession(logger *logging.Logger, config *config.Config, sessionId string, state *SessionState) (string, error)
 	TryGetSession(logger *logging.Logger, config *config.Config, sessionTicket string) (*SessionState, error)
+	DeleteSession(logger *logging.Logger, config *config.Config, sessionId string) error
 }
 
 type SessionState struct {

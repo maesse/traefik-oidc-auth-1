@@ -44,3 +44,9 @@ func (storage *CookieSessionStorage) TryGetSession(logger *logging.Logger, confi
 
 	return state, nil
 }
+
+func (storage *CookieSessionStorage) DeleteSession(logger *logging.Logger, config *config.Config, sessionId string) error {
+	// Cookie-backed sessions have no server-side state to delete. The caller
+	// invalidates them by clearing the transport cookie.
+	return nil
+}

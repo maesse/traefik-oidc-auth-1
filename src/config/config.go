@@ -9,7 +9,8 @@ import (
 const DefaultSecret = "MLFs4TT99kOOq8h3UAVRtYoCTDYXiRcZ"
 
 const (
-	SessionStorageTypeCookie string = "Cookie"
+	SessionStorageTypeCookie   string = "Cookie"
+	SessionStorageTypeInMemory string = "InMemory"
 )
 
 type Config struct {

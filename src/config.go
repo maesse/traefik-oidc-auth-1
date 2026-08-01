@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,6 +43,7 @@ func CreateConfig() *config.Config {
 		CallbackUri:           "/oidc/callback",
 		LogoutUri:             "/logout",
 		PostLogoutRedirectUri: "/",
+		SessionStorageType:    config.SessionStorageTypeCookie,
 		CookieNamePrefix:      "TraefikOidcAuth",
 		SessionCookie: &config.SessionCookieConfig{
 			Path:     "/",
@@ -92,6 +94,7 @@ func New(uctx context.Context, next http.Handler, cfg *config.Config, name strin
 	cfg.PostLoginRedirectUri = utils.ExpandEnvironmentVariableString(cfg.PostLoginRedirectUri)
 	cfg.LogoutUri = utils.ExpandEnvironmentVariableString(cfg.LogoutUri)
 	cfg.PostLogoutRedirectUri = utils.ExpandEnvironmentVariableString(cfg.PostLogoutRedirectUri)
+	cfg.SessionStorageType = utils.ExpandEnvironmentVariableString(cfg.SessionStorageType)
 	cfg.CookieNamePrefix = utils.ExpandEnvironmentVariableString(cfg.CookieNamePrefix)
 	cfg.UnauthenticatedBehavior = utils.ExpandEnvironmentVariableString(cfg.UnauthenticatedBehavior)
 	cfg.UnauthorizedBehavior = utils.ExpandEnvironmentVariableString(cfg.UnauthorizedBehavior)
@@ -279,6 +282,11 @@ func New(uctx context.Context, next http.Handler, cfg *config.Config, name strin
 		Transport: httpTransport,
 	}
 
+	sessionStorage, err := createSessionStorage(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	logger.Log(logging.LevelInfo, "Configuration loaded successfully, starting OIDC Auth middleware...")
 
 	return &TraefikOidcAuth{
@@ -289,8 +297,23 @@ func New(uctx context.Context, next http.Handler, cfg *config.Config, name strin
 		ClientJwtPrivateKey:         clientAssertionPrivateKey,
 		CallbackURL:                 parsedCallbackURL,
 		Config:                      cfg,
-		SessionStorage:              session.CreateCookieSessionStorage(),
+		SessionStorage:              sessionStorage,
 		BypassAuthenticationRule:    conditionalAuth,
 		RedirectUriWildcardsEnabled: redirectUriWildcardsEnabled,
 	}, nil
+}
+
+func createSessionStorage(cfg *config.Config) (session.SessionStorage, error) {
+	switch cfg.SessionStorageType {
+	case "", config.SessionStorageTypeCookie:
+		return session.CreateCookieSessionStorage(), nil
+	case config.SessionStorageTypeInMemory:
+		maxAge := 0
+		if cfg.SessionCookie != nil {
+			maxAge = cfg.SessionCookie.MaxAge
+		}
+		return session.CreateInMemorySessionStorage(maxAge), nil
+	default:
+		return nil, fmt.Errorf("unsupported SessionStorageType %q", cfg.SessionStorageType)
+	}
 }
