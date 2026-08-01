@@ -522,6 +522,14 @@ func (toa *TraefikOidcAuth) handleLogout(rw http.ResponseWriter, req *http.Reque
 		"id_token_hint":            {session.IdToken},
 	}.Encode()
 
+	if err := toa.SessionStorage.DeleteSession(toa.logger, toa.Config, session.Id); err != nil {
+		toa.logger.Log(logging.LevelWarn, "Failed to delete session %s: %s", session.Id, err.Error())
+	}
+
+	if err := clearChunkedCookie(toa.Config, rw, req, getSessionCookieName(toa.Config)); err != nil {
+		toa.logger.Log(logging.LevelWarn, "Failed to clear session cookie: %s", err.Error())
+	}
+
 	http.Redirect(rw, req, endSessionURL.String(), http.StatusFound)
 }
 

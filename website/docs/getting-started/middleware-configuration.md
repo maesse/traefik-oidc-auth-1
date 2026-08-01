@@ -57,6 +57,7 @@ Provider:
 | `LogoutUri`* | no | `string` | `/logout` | The url which should trigger the logout-flow. See [here](./how-it-works.md#logout) for more details. |
 | `PostLogoutRedirectUri`* | no | `string` | `/` | The url where the user should be redirected after logout. |
 | `ValidPostLogoutRedirectUris` | no | `string[]` | *none* | A list of valid redirect uris when provided by the *redirect_uri* query parameter on the logout-endpoint. Per the OIDC/OAuth2 spec, the uri has to match exactly. Wildcards (including a single `*` matching anything) are an opt-in -- see [Redirect Uri Wildcards](#redirect-uri-wildcards) below. |
+| `SessionStorageType`* | no | `string` | `Cookie` | Selects the session storage implementation. `Cookie` stores the complete encrypted session in the session cookie. `InMemory` keeps session state in this Traefik process and sends only a session identifier to the client. |
 | `CookieNamePrefix`* | no | `string` | `TraefikOidcAuth` | Specifies the prefix for all cookies used internally by the plugin. The final names are concatenated using dot-notation. Eg. `TraefikOidcAuth.Session`, `TraefikOidcAuth.CodeVerifier` etc. Please note that this prefix does not apply to *AuthorizationCookie* where the name can be set individually. |
 | `SessionCookie` | no | [`SessionCookie`](#session-cookie) | *none* | SessionCookie Configuration. See *SessionCookieConfig* block. |
 | `AuthorizationHeader` | no | [`AuthorizationHeader`](#authorization-header) | *none* | AuthorizationHeader Configuration. See *AuthorizationHeader* block. |
@@ -69,6 +70,16 @@ Provider:
 | `ErrorPages` | no | [`ErrorPages`](#error-pages) | *none* | Allows you to customize some error pages. See *ErrorPages* block. |
 | `RequestedResources` | no | `string[]`| *none* | An array of resource URIs according to [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) for which the token should be requested. | 
 | `AuthorizationParams` | no | `map[string]string`| *none* | Additional query parameters to send to the IDP's authorization endpoint, eg. `acr_values` to request a specific authentication context (step-up authentication) or a default `prompt`. Reserved protocol parameters (`response_type`, `client_id`, `redirect_uri`, `state`, `scope`, `resource`) cannot be overridden this way and are ignored with a warning. A `prompt` query parameter on the incoming `/login` request still takes precedence over the configured value. |
+
+### Session Storage
+
+`Cookie` is stateless and remains the default. The complete session is encrypted into one or more cookies, so it can be used by multiple middleware or Traefik instances that share the same configuration and secret.
+
+`InMemory` stores the session in the middleware instance and puts only a random session identifier in the client cookie. When switching from `Cookie` to `InMemory`, an existing cookie-backed session is rejected and its obsolete chunked session cookies are expired on the next request.
+
+:::warning
+In-memory sessions are lost when the middleware is recreated or Traefik restarts. They are not shared with another middleware instance or Traefik replica, so deployments with multiple replicas require sticky routing. The server-side lifetime uses `SessionCookie.MaxAge`; when that value is `0` or negative, it defaults to 3600 seconds.
+:::
 
 ### Redirect Uri Wildcards {#redirect-uri-wildcards}
 
