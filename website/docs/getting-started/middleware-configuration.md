@@ -57,7 +57,8 @@ Provider:
 | `LogoutUri`* | no | `string` | `/logout` | The url which should trigger the logout-flow. See [here](./how-it-works.md#logout) for more details. |
 | `PostLogoutRedirectUri`* | no | `string` | `/` | The url where the user should be redirected after logout. |
 | `ValidPostLogoutRedirectUris` | no | `string[]` | *none* | A list of valid redirect uris when provided by the *redirect_uri* query parameter on the logout-endpoint. Per the OIDC/OAuth2 spec, the uri has to match exactly. Wildcards (including a single `*` matching anything) are an opt-in -- see [Redirect Uri Wildcards](#redirect-uri-wildcards) below. |
-| `SessionStorageType`* | no | `string` | `Cookie` | Selects the session storage implementation. `Cookie` stores the complete encrypted session in the session cookie. `InMemory` keeps session state in this Traefik process and sends only a session identifier to the client. |
+| `SessionStorageType`* | no | `string` | `Cookie` | Selects the session storage implementation: `Cookie`, `InMemory`, or `Redis`. |
+| `Redis` | when using `Redis` | [`Redis`](#redis) | see below | Redis session storage and connection pool configuration. |
 | `CookieNamePrefix`* | no | `string` | `TraefikOidcAuth` | Specifies the prefix for all cookies used internally by the plugin. The final names are concatenated using dot-notation. Eg. `TraefikOidcAuth.Session`, `TraefikOidcAuth.CodeVerifier` etc. Please note that this prefix does not apply to *AuthorizationCookie* where the name can be set individually. |
 | `SessionCookie` | no | [`SessionCookie`](#session-cookie) | *none* | SessionCookie Configuration. See *SessionCookieConfig* block. |
 | `AuthorizationHeader` | no | [`AuthorizationHeader`](#authorization-header) | *none* | AuthorizationHeader Configuration. See *AuthorizationHeader* block. |
@@ -80,6 +81,44 @@ Provider:
 :::warning
 In-memory sessions are lost when the middleware is recreated or Traefik restarts. They are not shared with another middleware instance or Traefik replica, so deployments with multiple replicas require sticky routing. The server-side lifetime uses `SessionCookie.MaxAge`; when that value is `0` or negative, it defaults to 3600 seconds.
 :::
+
+`Redis` also puts only a random session identifier in the client cookie, but stores the session JSON in Redis with an expiry. This allows middleware instances and Traefik replicas to share sessions without sticky routing. The server-side lifetime uses `SessionCookie.MaxAge`; when that value is `0` or negative, it defaults to 3600 seconds.
+
+The stored JSON contains the OIDC tokens, so Redis must be treated as sensitive infrastructure: restrict network access, require authentication, and enable TLS when traffic leaves a trusted local network.
+
+The Redis client is implemented directly on the RESP2 protocol so it can run under Yaegi. Connections are pooled and reused across middleware instances with identical Redis connection settings. `MaxConnections` is a hard per-process limit for each distinct Redis configuration; callers wait up to `ConnectTimeoutSeconds` for a pooled connection when that limit is reached. This avoids opening a new TCP connection for each request and prevents configuration reloads from creating unbounded pools. Connections that have been idle longer than `IdleTimeoutSeconds` are discarded before reuse.
+
+```yml
+SessionStorageType: Redis
+SessionCookie:
+  MaxAge: 3600
+Redis:
+  Address: "redis:6379"
+  Username: "${REDIS_USERNAME}"
+  Password: "${file:/run/secrets/redis_password}"
+  Database: 0
+  KeyPrefix: "traefik-oidc-auth:session:"
+  MaxConnections: 10
+  MaxIdleConnections: 10
+```
+
+## Redis Block {#redis}
+
+| Name | Required | Type | Default | Description |
+|---|---|---|---|---|
+| `Address`* | no | `string` | `localhost:6379` | Redis TCP address in `host:port` form. |
+| `Username`* | no | `string` | *none* | Optional Redis ACL username. Requires `Password`. |
+| `Password`* | no | `string` | *none* | Optional Redis password. `AUTH` is performed once for each new connection. |
+| `Database` | no | `int` | `0` | Redis database selected for each new connection. |
+| `KeyPrefix`* | no | `string` | `traefik-oidc-auth:session:` | Prefix added to session IDs when constructing Redis keys. |
+| `MaxConnections` | no | `int` | `10` | Maximum open Redis connections for this Redis configuration in one Traefik process. |
+| `MaxIdleConnections` | no | `int` | `10` | Maximum pooled idle connections. Must not exceed `MaxConnections`. |
+| `ConnectTimeoutSeconds` | no | `int` | `5` | TCP/TLS connect timeout and maximum wait for a pooled connection. |
+| `ReadTimeoutSeconds` | no | `int` | `3` | Per-command Redis response timeout. |
+| `WriteTimeoutSeconds` | no | `int` | `3` | Per-command Redis request timeout. |
+| `IdleTimeoutSeconds` | no | `int` | `60` | Connections idle for this long are closed instead of reused. |
+| `TLS` | no | `bool` | `false` | Connect to Redis using TLS and the system certificate pool. |
+| `TLSInsecureSkipVerify` | no | `bool` | `false` | Disable Redis TLS certificate verification. Use only for testing. |
 
 ### Redirect Uri Wildcards {#redirect-uri-wildcards}
 

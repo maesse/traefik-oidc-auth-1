@@ -11,7 +11,7 @@ import (
 	"github.com/sevensolutions/traefik-oidc-auth/src/logging"
 )
 
-const defaultInMemorySessionMaxAge = 3600
+const defaultServerSideSessionMaxAge = 3600
 
 var (
 	ErrInvalidSessionTicket = errors.New("invalid session ticket")
@@ -32,7 +32,7 @@ type InMemorySessionStorage struct {
 
 func CreateInMemorySessionStorage(maxAgeSeconds int) *InMemorySessionStorage {
 	if maxAgeSeconds <= 0 {
-		maxAgeSeconds = defaultInMemorySessionMaxAge
+		maxAgeSeconds = defaultServerSideSessionMaxAge
 	}
 
 	return &InMemorySessionStorage{

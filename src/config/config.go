@@ -11,6 +11,7 @@ const DefaultSecret = "MLFs4TT99kOOq8h3UAVRtYoCTDYXiRcZ"
 const (
 	SessionStorageTypeCookie   string = "Cookie"
 	SessionStorageTypeInMemory string = "InMemory"
+	SessionStorageTypeRedis    string = "Redis"
 )
 
 type Config struct {
@@ -38,7 +39,8 @@ type Config struct {
 	PostLogoutRedirectUri       string   `json:"post_logout_redirect_uri"`
 	ValidPostLogoutRedirectUris []string `json:"valid_post_logout_redirect_uris"`
 
-	SessionStorageType string `json:"session_storage_type"`
+	SessionStorageType string                     `json:"session_storage_type"`
+	Redis              *RedisSessionStorageConfig `json:"redis"`
 
 	CookieNamePrefix        string                     `json:"cookie_name_prefix"`
 	SessionCookie           *SessionCookieConfig       `json:"session_cookie"`
@@ -60,6 +62,22 @@ type Config struct {
 	// Additional query parameters to send to the IDP's authorization endpoint, eg. acr_values or prompt.
 	// A `prompt` query parameter on the incoming /login request still takes precedence over this.
 	AuthorizationParams map[string]string `json:"authorization_params"`
+}
+
+type RedisSessionStorageConfig struct {
+	Address               string `json:"address"`
+	Username              string `json:"username"`
+	Password              string `json:"password"`
+	Database              int    `json:"database"`
+	KeyPrefix             string `json:"key_prefix"`
+	MaxConnections        int    `json:"max_connections"`
+	MaxIdleConnections    int    `json:"max_idle_connections"`
+	ConnectTimeoutSeconds int    `json:"connect_timeout_seconds"`
+	ReadTimeoutSeconds    int    `json:"read_timeout_seconds"`
+	WriteTimeoutSeconds   int    `json:"write_timeout_seconds"`
+	IdleTimeoutSeconds    int    `json:"idle_timeout_seconds"`
+	TLS                   bool   `json:"tls"`
+	TLSInsecureSkipVerify bool   `json:"tls_insecure_skip_verify"`
 }
 
 type ProviderConfig struct {

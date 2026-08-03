@@ -36,6 +36,9 @@ func TestCreateConfigDefaultsToCookieSessionStorage(t *testing.T) {
 	if cfg.SessionStorageType != config.SessionStorageTypeCookie {
 		t.Fatalf("SessionStorageType = %q, want %q", cfg.SessionStorageType, config.SessionStorageTypeCookie)
 	}
+	if cfg.Redis == nil || cfg.Redis.Address != "localhost:6379" || cfg.Redis.MaxConnections != 10 {
+		t.Fatalf("unexpected Redis defaults: %#v", cfg.Redis)
+	}
 }
 
 func TestCreateSessionStorage(t *testing.T) {
@@ -83,6 +86,24 @@ func TestCreateInMemorySessionStorage(t *testing.T) {
 	}
 	if _, ok := storage.(*session.InMemorySessionStorage); !ok {
 		t.Fatalf("createSessionStorage returned %T, want *session.InMemorySessionStorage", storage)
+	}
+}
+
+func TestCreateRedisSessionStorage(t *testing.T) {
+	storage, err := createSessionStorage(&config.Config{
+		SessionStorageType: config.SessionStorageTypeRedis,
+		SessionCookie: &config.SessionCookieConfig{
+			MaxAge: 120,
+		},
+		Redis: &config.RedisSessionStorageConfig{
+			Address: "localhost:6379",
+		},
+	})
+	if err != nil {
+		t.Fatalf("createSessionStorage failed: %v", err)
+	}
+	if _, ok := storage.(*session.RedisSessionStorage); !ok {
+		t.Fatalf("createSessionStorage returned %T, want *session.RedisSessionStorage", storage)
 	}
 }
 

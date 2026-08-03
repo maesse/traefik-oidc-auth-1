@@ -44,7 +44,17 @@ func CreateConfig() *config.Config {
 		LogoutUri:             "/logout",
 		PostLogoutRedirectUri: "/",
 		SessionStorageType:    config.SessionStorageTypeCookie,
-		CookieNamePrefix:      "TraefikOidcAuth",
+		Redis: &config.RedisSessionStorageConfig{
+			Address:               "localhost:6379",
+			KeyPrefix:             "traefik-oidc-auth:session:",
+			MaxConnections:        10,
+			MaxIdleConnections:    10,
+			ConnectTimeoutSeconds: 5,
+			ReadTimeoutSeconds:    3,
+			WriteTimeoutSeconds:   3,
+			IdleTimeoutSeconds:    60,
+		},
+		CookieNamePrefix: "TraefikOidcAuth",
 		SessionCookie: &config.SessionCookieConfig{
 			Path:     "/",
 			Domain:   "",
@@ -95,6 +105,12 @@ func New(uctx context.Context, next http.Handler, cfg *config.Config, name strin
 	cfg.LogoutUri = utils.ExpandEnvironmentVariableString(cfg.LogoutUri)
 	cfg.PostLogoutRedirectUri = utils.ExpandEnvironmentVariableString(cfg.PostLogoutRedirectUri)
 	cfg.SessionStorageType = utils.ExpandEnvironmentVariableString(cfg.SessionStorageType)
+	if cfg.Redis != nil {
+		cfg.Redis.Address = utils.ExpandEnvironmentVariableString(cfg.Redis.Address)
+		cfg.Redis.Username = utils.ExpandEnvironmentVariableString(cfg.Redis.Username)
+		cfg.Redis.Password = utils.ExpandEnvironmentVariableString(cfg.Redis.Password)
+		cfg.Redis.KeyPrefix = utils.ExpandEnvironmentVariableString(cfg.Redis.KeyPrefix)
+	}
 	cfg.CookieNamePrefix = utils.ExpandEnvironmentVariableString(cfg.CookieNamePrefix)
 	cfg.UnauthenticatedBehavior = utils.ExpandEnvironmentVariableString(cfg.UnauthenticatedBehavior)
 	cfg.UnauthorizedBehavior = utils.ExpandEnvironmentVariableString(cfg.UnauthorizedBehavior)
@@ -313,6 +329,12 @@ func createSessionStorage(cfg *config.Config) (session.SessionStorage, error) {
 			maxAge = cfg.SessionCookie.MaxAge
 		}
 		return session.CreateInMemorySessionStorage(maxAge), nil
+	case config.SessionStorageTypeRedis:
+		maxAge := 0
+		if cfg.SessionCookie != nil {
+			maxAge = cfg.SessionCookie.MaxAge
+		}
+		return session.CreateRedisSessionStorage(cfg.Redis, maxAge)
 	default:
 		return nil, fmt.Errorf("unsupported SessionStorageType %q", cfg.SessionStorageType)
 	}
