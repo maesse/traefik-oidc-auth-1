@@ -1,6 +1,7 @@
 package src
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -12,8 +13,14 @@ import (
 )
 
 func isAuthorized(logger *logging.Logger, authorization *config.AuthorizationConfig, claims map[string]interface{}) bool {
+	return isAuthorizedWithContext(context.Background(), logger, authorization, claims)
+}
+
+func isAuthorizedWithContext(ctx context.Context, logger *logging.Logger, authorization *config.AuthorizationConfig, claims map[string]interface{}) bool {
 	if authorization.AssertClaims != nil && len(authorization.AssertClaims) > 0 {
+		stage := beginProfileStage(ctx, "claims.marshal")
 		parsed, err := json.Marshal(claims)
+		stage.End()
 		if err != nil {
 			logger.Log(logging.LevelWarn, "Error whilst marshalling claims object: %s", err.Error())
 			return false
@@ -21,7 +28,9 @@ func isAuthorized(logger *logging.Logger, authorization *config.AuthorizationCon
 
 	assertions:
 		for _, assertion := range authorization.AssertClaims {
+			stage = beginProfileStage(ctx, "claims.jsonpath")
 			value, err := ajson.JSONPath(parsed, fmt.Sprintf("$.%s", assertion.Name))
+			stage.End()
 			if err != nil {
 				logger.Log(logging.LevelWarn, "Error whilst parsing path for claim %s in token claims: %s", assertion.Name, err.Error())
 				return false
@@ -45,7 +54,9 @@ func isAuthorized(logger *logging.Logger, authorization *config.AuthorizationCon
 
 		matches:
 			for _, val := range value {
+				stage = beginProfileStage(ctx, "claims.unpack")
 				unpacked, err := val.Unpack()
+				stage.End()
 				if err != nil {
 					logger.Log(logging.LevelError, "Error whilst unpacking json node: %s", err.Error())
 					continue matches

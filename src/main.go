@@ -166,7 +166,7 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		// Ensure the session is authorized
 		if session.Id == "AuthorizationHeader" || session.Id == "AuthorizationCookie" || toa.Config.Authorization.CheckOnEveryRequest {
 			stage = beginProfileStage(req.Context(), "authorization")
-			session.IsAuthorized = isAuthorized(toa.logger, toa.Config.Authorization, claims)
+			session.IsAuthorized = isAuthorizedWithContext(req.Context(), toa.logger, toa.Config.Authorization, claims)
 			stage.End()
 		}
 
@@ -448,7 +448,7 @@ func (toa *TraefikOidcAuth) handleCallback(rw http.ResponseWriter, req *http.Req
 
 		toa.logger.Log(logging.LevelInfo, "Exchange Auth Code completed. Token: %+v", redactedToken)
 
-		isAuthorized := isAuthorized(toa.logger, toa.Config.Authorization, claims)
+		isAuthorized := isAuthorizedWithContext(req.Context(), toa.logger, toa.Config.Authorization, claims)
 
 		session := &session.SessionState{
 			Id:                 session.GenerateSessionId(),
