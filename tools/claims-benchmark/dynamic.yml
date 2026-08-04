@@ -1,0 +1,73 @@
+http:
+  routers:
+    baseline:
+      entryPoints: [benchmark]
+      rule: Path(`/baseline`)
+      middlewares: [baseline]
+      service: unused
+    marshal:
+      entryPoints: [benchmark]
+      rule: Path(`/marshal`)
+      middlewares: [marshal]
+      service: unused
+    jsonpath:
+      entryPoints: [benchmark]
+      rule: Path(`/jsonpath`)
+      middlewares: [jsonpath]
+      service: unused
+    full:
+      entryPoints: [benchmark]
+      rule: Path(`/full`)
+      middlewares: [full]
+      service: unused
+    direct:
+      entryPoints: [benchmark]
+      rule: Path(`/direct`)
+      middlewares: [direct]
+      service: unused
+    jwt:
+      entryPoints: [benchmark]
+      rule: Path(`/jwt`)
+      middlewares: [jwt]
+      service: unused
+    jwt-full:
+      entryPoints: [benchmark]
+      rule: Path(`/jwt-full`)
+      middlewares: [jwt-full]
+      service: unused
+
+  middlewares:
+    baseline:
+      plugin:
+        claimbench:
+          Mode: baseline
+    marshal:
+      plugin:
+        claimbench:
+          Mode: marshal
+    jsonpath:
+      plugin:
+        claimbench:
+          Mode: jsonpath
+    full:
+      plugin:
+        claimbench:
+          Mode: full
+    direct:
+      plugin:
+        claimbench:
+          Mode: direct
+    jwt:
+      plugin:
+        claimbench:
+          Mode: jwt
+    jwt-full:
+      plugin:
+        claimbench:
+          Mode: jwt-full
+
+  services:
+    unused:
+      loadBalancer:
+        servers:
+          - url: http://127.0.0.1:1

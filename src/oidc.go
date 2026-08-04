@@ -1,6 +1,7 @@
 package src
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -134,10 +135,12 @@ func exchangeAuthCode(oidcAuth *TraefikOidcAuth, req *http.Request, authCode str
 	return tokenResponse, nil
 }
 
-func (toa *TraefikOidcAuth) validateTokenLocally(tokenString string) (bool, map[string]interface{}, error) {
+func (toa *TraefikOidcAuth) validateTokenLocally(ctx context.Context, tokenString string) (bool, map[string]interface{}, error) {
 	claims := jwt.MapClaims{}
 
+	stage := beginProfileStage(ctx, "jwks.ensure")
 	err := toa.Jwks.EnsureLoaded(toa.logger, toa.httpClient, false)
+	stage.End()
 	if err != nil {
 		return false, nil, err
 	}
@@ -155,7 +158,9 @@ func (toa *TraefikOidcAuth) validateTokenLocally(tokenString string) (bool, map[
 
 	parser := jwt.NewParser(options...)
 
+	stage = beginProfileStage(ctx, "jwt.parse")
 	_, err = parser.ParseWithClaims(tokenString, claims, toa.Jwks.Keyfunc)
+	stage.End()
 
 	if err != nil {
 		// If the token is expired, reloading JWKS won't help — skip the retry.
@@ -165,12 +170,16 @@ func (toa *TraefikOidcAuth) validateTokenLocally(tokenString string) (bool, map[
 		}
 
 		// For other errors (e.g. unknown kid after key rotation), force-reload JWKS and retry.
+		stage = beginProfileStage(ctx, "jwks.ensure")
 		err := toa.Jwks.EnsureLoaded(toa.logger, toa.httpClient, true)
+		stage.End()
 		if err != nil {
 			return false, nil, err
 		}
 
+		stage = beginProfileStage(ctx, "jwt.parse")
 		_, err = parser.ParseWithClaims(tokenString, claims, toa.Jwks.Keyfunc)
+		stage.End()
 
 		if err != nil {
 			if isTokenExpiredError(err) {

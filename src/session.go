@@ -1,6 +1,7 @@
 package src
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -30,7 +31,7 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 				AccessToken: authHeader,
 			}
 
-			ok, claims, err := toa.validateToken(session)
+			ok, claims, err := toa.validateToken(req.Context(), session)
 
 			if ok {
 				return session, false, claims, err
@@ -52,7 +53,7 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 				AccessToken: authCookie.Value,
 			}
 
-			ok, claims, err := toa.validateToken(session)
+			ok, claims, err := toa.validateToken(req.Context(), session)
 
 			if ok {
 				return session, false, claims, err
@@ -63,7 +64,9 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 	}
 
 	// Use SessionCookie, if present
+	stage := beginProfileStage(req.Context(), "session.cookie")
 	sessionTicket, err := readChunkedCookie(req, getSessionCookieName(toa.Config))
+	stage.End()
 
 	if err != nil {
 		return nil, false, nil, fmt.Errorf("unable to read session cookie: %s", strings.TrimLeft(err.Error(), "http: "))
@@ -72,7 +75,7 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 		return nil, false, nil, fmt.Errorf("no session cookie is present")
 	}
 
-	session, claims, updatedSession, err := validateSessionTicket(toa, sessionTicket)
+	session, claims, updatedSession, err := validateSessionTicket(toa, req.Context(), sessionTicket)
 
 	if err != nil {
 		return nil, false, claims, fmt.Errorf("failed to validate session ticket: %s", err.Error())
@@ -90,8 +93,10 @@ func (toa *TraefikOidcAuth) getSessionForRequest(req *http.Request) (*session.Se
 	return session, updatedSession != nil, claims, nil
 }
 
-func validateSessionTicket(toa *TraefikOidcAuth, sessionTicket string) (*session.SessionState, map[string]interface{}, *session.SessionState, error) {
+func validateSessionTicket(toa *TraefikOidcAuth, ctx context.Context, sessionTicket string) (*session.SessionState, map[string]interface{}, *session.SessionState, error) {
+	stage := beginProfileStage(ctx, "session.load")
 	session, err := toa.SessionStorage.TryGetSession(toa.logger, toa.Config, sessionTicket)
+	stage.End()
 	if err != nil {
 		toa.logger.Log(logging.LevelError, "Reading session failed: %v", err.Error())
 		return nil, nil, nil, err
@@ -101,7 +106,7 @@ func validateSessionTicket(toa *TraefikOidcAuth, sessionTicket string) (*session
 		return nil, nil, nil, nil
 	}
 
-	success, claims, err := toa.validateToken(session)
+	success, claims, err := toa.validateToken(ctx, session)
 
 	// Check if the session or IDP token expires soon
 	idpTokenExpiresSoon := false
@@ -113,7 +118,9 @@ func validateSessionTicket(toa *TraefikOidcAuth, sessionTicket string) (*session
 		if session.RefreshToken != "" {
 			toa.logger.Log(logging.LevelInfo, "Trying to renew tokens...")
 
+			stage = beginProfileStage(ctx, "token.refresh")
 			newTokens, err := toa.renewToken(session.RefreshToken)
+			stage.End()
 
 			if err != nil {
 				return nil, nil, nil, err
@@ -139,7 +146,7 @@ func validateSessionTicket(toa *TraefikOidcAuth, sessionTicket string) (*session
 				}
 			}
 
-			success, claims, err = toa.validateToken(session)
+			success, claims, err = toa.validateToken(ctx, session)
 
 			if !success || err != nil {
 				toa.logger.Log(logging.LevelError, "Failed to validate renewed session: %v", err)
@@ -179,7 +186,7 @@ func checkIdpTokenExpiresSoon(toa *TraefikOidcAuth, session *session.SessionStat
 	return false
 }
 
-func (toa *TraefikOidcAuth) validateToken(session *session.SessionState) (bool, map[string]interface{}, error) {
+func (toa *TraefikOidcAuth) validateToken(ctx context.Context, session *session.SessionState) (bool, map[string]interface{}, error) {
 	var token string
 
 	// Little bit hacky. In case the request contains a custom AuthorizationHeader or Cookie, only AccessToken is used.
@@ -198,10 +205,13 @@ func (toa *TraefikOidcAuth) validateToken(session *session.SessionState) (bool, 
 	}
 
 	if toa.Config.Provider.TokenValidation == "Introspection" {
-		return toa.introspectToken(token)
+		stage := beginProfileStage(ctx, "token.introspect")
+		ok, claims, err := toa.introspectToken(token)
+		stage.End()
+		return ok, claims, err
 	}
 
-	ok, claims, err := toa.validateTokenLocally(token)
+	ok, claims, err := toa.validateTokenLocally(ctx, token)
 
 	if !ok {
 		return ok, claims, err
@@ -213,7 +223,9 @@ func (toa *TraefikOidcAuth) validateToken(session *session.SessionState) (bool, 
 			return false, nil, fmt.Errorf("failed to fetch UserInfo: 'sub' claim is not a string or missing")
 		}
 
+		stage := beginProfileStage(ctx, "oidc.userinfo")
 		userInfoClaims, err := toa.getUserInfo(session.AccessToken, subClaim)
+		stage.End()
 		if err != nil {
 			return false, nil, fmt.Errorf("failed to fetch UserInfo: %s", err.Error())
 		}

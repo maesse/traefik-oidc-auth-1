@@ -26,8 +26,9 @@ import (
 // Will be called by traefik
 func CreateConfig() *config.Config {
 	return &config.Config{
-		LogLevel: logging.LevelWarn,
-		Secret:   config.DefaultSecret,
+		LogLevel:  logging.LevelWarn,
+		Profiling: &config.ProfilingConfig{},
+		Secret:    config.DefaultSecret,
 		Provider: &config.ProviderConfig{
 			UsePkceBool:               false,
 			InsecureSkipVerifyBool:    false,

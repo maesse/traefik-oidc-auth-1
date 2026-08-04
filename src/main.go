@@ -109,39 +109,54 @@ func (toa *TraefikOidcAuth) isCallbackRequest(req *http.Request) bool {
 }
 
 func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	req, profile := startRequestProfile(toa.Config.Profiling, rw, req)
+	if profile != nil {
+		defer profile.Log(toa.logger, req)
+	}
+
 	isPublic := false
 	if toa.BypassAuthenticationRule != nil {
+		stage := beginProfileStage(req.Context(), "auth.bypass")
 		if toa.BypassAuthenticationRule.Match(toa.logger, req) {
 			toa.logger.Log(logging.LevelDebug, "BypassAuthenticationRule matched. Forwarding request without authentication.")
 			isPublic = true
 		} else {
 			toa.logger.Log(logging.LevelDebug, "BypassAuthenticationRule not matched. Requiring authentication.")
 		}
+		stage.End()
 	}
 
+	stage := beginProfileStage(req.Context(), "oidc.discovery")
 	err := toa.EnsureOidcDiscovery()
+	stage.End()
 
 	if err != nil {
 		toa.logger.Log(logging.LevelError, "Error getting oidc discovery: %s", err.Error())
+		profile.PublishServerTiming(rw)
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	if toa.isCallbackRequest(req) {
+		profile.PublishServerTiming(rw)
 		toa.handleCallback(rw, req)
 		return
 	}
 
 	if toa.Config.LoginUri != "" && strings.HasPrefix(req.RequestURI, toa.Config.LoginUri) {
+		profile.PublishServerTiming(rw)
 		toa.handleLogin(rw, req, false, "")
 		return
 	}
 
+	stage = beginProfileStage(req.Context(), "session.total")
 	session, updateSession, claims, err := toa.getSessionForRequest(req)
+	stage.End()
 
 	if err == nil && session != nil {
 		// Handle logout
 		if strings.HasPrefix(req.RequestURI, toa.Config.LogoutUri) {
+			profile.PublishServerTiming(rw)
 			toa.handleLogout(rw, req, session)
 			return
 		}
@@ -150,33 +165,51 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		// we need to validate the authorization on every request.
 		// Ensure the session is authorized
 		if session.Id == "AuthorizationHeader" || session.Id == "AuthorizationCookie" || toa.Config.Authorization.CheckOnEveryRequest {
+			stage = beginProfileStage(req.Context(), "authorization")
 			session.IsAuthorized = isAuthorized(toa.logger, toa.Config.Authorization, claims)
+			stage.End()
 		}
 
 		if !session.IsAuthorized && toa.Config.UnauthorizedBehavior != "Forward" {
+			profile.PublishServerTiming(rw)
 			toa.handleUnauthorized(rw, req, session, "")
 			return
 		}
 
 		// Attach upstream headers
+		stage = beginProfileStage(req.Context(), "headers.attach")
 		err = toa.attachHeaders(req, session, claims, isPublic, session.IsAuthorized)
+		stage.End()
 		if err != nil {
 			toa.logger.Log(logging.LevelError, "Error while attaching headers: %s", err.Error())
+			profile.PublishServerTiming(rw)
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		if updateSession {
+			stage = beginProfileStage(req.Context(), "session.store")
 			toa.storeSessionAndAttachCookie(session, rw)
+			stage.End()
 		}
 
 		// Forward the request
+		stage = beginProfileStage(req.Context(), "request.sanitize")
 		toa.sanitizeForUpstream(req)
+		stage.End()
+		profile.PublishServerTiming(rw)
+		stage = beginProfileStage(req.Context(), "downstream")
 		toa.next.ServeHTTP(rw, req)
+		stage.End()
 		return
 	} else if isPublic {
+		stage = beginProfileStage(req.Context(), "request.sanitize")
 		toa.sanitizeForUpstream(req)
+		stage.End()
+		profile.PublishServerTiming(rw)
+		stage = beginProfileStage(req.Context(), "downstream")
 		toa.next.ServeHTTP(rw, req)
+		stage.End()
 		return
 	} else {
 		toa.logger.Log(logging.LevelInfo, "Verifying token: %s", err.Error())
@@ -185,6 +218,7 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		clearChunkedCookie(toa.Config, rw, req, getSessionCookieName(toa.Config))
 	}
 
+	profile.PublishServerTiming(rw)
 	toa.handleUnauthenticated(rw, req)
 }
 
@@ -385,7 +419,7 @@ func (toa *TraefikOidcAuth) handleCallback(rw http.ResponseWriter, req *http.Req
 		if toa.Config.Provider.TokenValidation == "Introspection" {
 			_, claims, err = toa.introspectToken(usedToken)
 		} else {
-			_, claims, err = toa.validateTokenLocally(usedToken)
+			_, claims, err = toa.validateTokenLocally(req.Context(), usedToken)
 		}
 
 		if err != nil {

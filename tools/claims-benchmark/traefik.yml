@@ -1,0 +1,17 @@
+entryPoints:
+  benchmark:
+    address: ":8080"
+
+providers:
+  file:
+    filename: /benchmark/dynamic.yml
+
+experimental:
+  localPlugins:
+    claimbench:
+      moduleName: example.com/claimbench
+
+log:
+  level: WARN
+
+accessLog: {}

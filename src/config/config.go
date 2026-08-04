@@ -15,7 +15,8 @@ const (
 )
 
 type Config struct {
-	LogLevel string `json:"log_level"`
+	LogLevel  string           `json:"log_level"`
+	Profiling *ProfilingConfig `json:"profiling"`
 
 	Secret string `json:"secret"`
 
@@ -62,6 +63,11 @@ type Config struct {
 	// Additional query parameters to send to the IDP's authorization endpoint, eg. acr_values or prompt.
 	// A `prompt` query parameter on the incoming /login request still takes precedence over this.
 	AuthorizationParams map[string]string `json:"authorization_params"`
+}
+
+type ProfilingConfig struct {
+	Enabled      bool `json:"enabled"`
+	ServerTiming bool `json:"server_timing"`
 }
 
 type RedisSessionStorageConfig struct {

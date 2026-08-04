@@ -1,0 +1,7 @@
+displayName: Claims Benchmark
+type: middleware
+import: example.com/claimbench
+summary: Benchmarks claim authorization paths under Traefik's Yaegi runtime.
+
+testData:
+  Mode: full
