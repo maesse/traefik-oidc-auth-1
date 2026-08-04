@@ -199,7 +199,7 @@ This works exactly the same as [AuthorizationHeader](#authorization-header), but
 | Name | Required | Type | Default | Description |
 |---|---|---|---|---|
 | `AssertClaims` | no | [`ClaimAssertion[]`](#claim-assertion) | *none* | ClaimAssertion Configuration. See *ClaimAssertion* block. |
-| `CheckOnEveryRequest` | no | `bool` | `false` |  When set to true, authorization is checked on every single request. When set to false, authorization is only checked when the user logs in and the session is being created, and the result is cached for the lifetime of the session. When using external authentication using ˋAuthorizationHeaderˋ or ˋAuthorizationCookieˋ this is always treated as true. See [When is authorization checked?](./authorization.md#when-is-authorization-checked) for details, including what happens if the initial check fails.
+| `CheckOnEveryRequest` | no | `bool` | `false` | When set to true, authorization is evaluated on every request. When false, decisions are cached by exact validated token, effective claims, and canonical authorization policy; different middleware policies cannot reuse one another's result. Token refresh and relevant configuration or claims changes invalidate the decision. External `AuthorizationHeader` and `AuthorizationCookie` authentication is always evaluated per request. See [When is authorization checked?](./authorization.md#when-is-authorization-checked).
 
 
 ## ClaimAssertion Block {#claim-assertion}

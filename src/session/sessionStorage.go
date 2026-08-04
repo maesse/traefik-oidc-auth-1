@@ -23,8 +23,21 @@ type SessionState struct {
 	AccessToken    string    `json:"access_token"`
 	IdToken        string    `json:"id_token"`
 	RefreshToken   string    `json:"refresh_token"`
-	IsAuthorized   bool      `json:"is_authorized"`
+	IsAuthorized   bool      `json:"is_authorized"` // Legacy field; never trusted across middleware policies.
 	TokenExpiresIn int       `json:"token_expires_in"`
+
+	// The validation cache is populated only after full local JWT validation. Server-side storage
+	// can then reuse the effective claims until the exact token, validation configuration, or
+	// verified expiration changes.
+	ValidationCacheKey string                 `json:"validation_cache_key,omitempty"`
+	ValidatedExpiresAt int64                  `json:"validated_expires_at,omitempty"`
+	ValidatedClaims    map[string]interface{} `json:"validated_claims,omitempty"`
+	ClaimsRevision     string                 `json:"claims_revision,omitempty"`
+
+	// Authorization decisions are scoped to the authentication cache key, effective claims, and
+	// canonical authorization policy. Identical middleware configurations therefore share results,
+	// while a more privileged policy can never reuse a less privileged policy's boolean.
+	AuthorizationResults map[string]bool `json:"authorization_results,omitempty"`
 
 	// Set when this session was (re-)established via a redirect triggered by UnauthorizedBehavior's
 	// Challenge, regardless of whether the resulting session ends up authorized - the callback may be

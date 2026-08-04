@@ -56,7 +56,7 @@ func (storage *InMemorySessionStorage) StoreSession(logger *logging.Logger, conf
 
 	storage.evictExpiredLocked(now)
 	storage.entries[sessionId] = inMemorySessionEntry{
-		state:     *state,
+		state:     cloneSessionState(state),
 		expiresAt: now.Add(storage.maxAge),
 	}
 
@@ -80,7 +80,7 @@ func (storage *InMemorySessionStorage) TryGetSession(logger *logging.Logger, con
 		storage.mu.Lock()
 		current, exists := storage.entries[sessionTicket]
 		if exists && now.Before(current.expiresAt) {
-			state := current.state
+			state := cloneSessionState(&current.state)
 			storage.mu.Unlock()
 			return &state, nil
 		}
@@ -91,8 +91,19 @@ func (storage *InMemorySessionStorage) TryGetSession(logger *logging.Logger, con
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionTicket)
 	}
 
-	state := entry.state
+	state := cloneSessionState(&entry.state)
 	return &state, nil
+}
+
+func cloneSessionState(state *SessionState) SessionState {
+	cloned := *state
+	if state.AuthorizationResults != nil {
+		cloned.AuthorizationResults = make(map[string]bool, len(state.AuthorizationResults))
+		for key, value := range state.AuthorizationResults {
+			cloned.AuthorizationResults[key] = value
+		}
+	}
+	return cloned
 }
 
 func (storage *InMemorySessionStorage) DeleteSession(logger *logging.Logger, config *config.Config, sessionId string) error {

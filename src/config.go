@@ -303,6 +303,10 @@ func New(uctx context.Context, next http.Handler, cfg *config.Config, name strin
 	if err != nil {
 		return nil, err
 	}
+	authorizationCachePolicyKey, err := authorizationFingerprint(cfg.Authorization)
+	if err != nil {
+		return nil, fmt.Errorf("fingerprint authorization configuration: %w", err)
+	}
 
 	logger.Log(logging.LevelInfo, "Configuration loaded successfully, starting OIDC Auth middleware...")
 
@@ -317,6 +321,7 @@ func New(uctx context.Context, next http.Handler, cfg *config.Config, name strin
 		SessionStorage:              sessionStorage,
 		BypassAuthenticationRule:    conditionalAuth,
 		RedirectUriWildcardsEnabled: redirectUriWildcardsEnabled,
+		authorizationCachePolicyKey: authorizationCachePolicyKey,
 	}, nil
 }
 

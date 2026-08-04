@@ -1,6 +1,7 @@
 package session
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -24,6 +25,14 @@ func TestCookieSessionStorageRoundTrip(t *testing.T) {
 		RefreshToken:       "refresh-token",
 		IsAuthorized:       true,
 		TokenExpiresIn:     3600,
+		ValidationCacheKey: "validation-key",
+		ValidatedExpiresAt: time.Date(2026, time.March, 14, 13, 0, 0, 0, time.UTC).Unix(),
+		ValidatedClaims:    map[string]interface{}{"sub": "user-1", "groups": []interface{}{"admins"}},
+		ClaimsRevision:     "claims-revision",
+		AuthorizationResults: map[string]bool{
+			"admin-policy": true,
+			"owner-policy": false,
+		},
 		ChallengeAttempted: true,
 	}
 
@@ -42,7 +51,7 @@ func TestCookieSessionStorageRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TryGetSession failed: %v", err)
 	}
-	if *actual != *state {
+	if !reflect.DeepEqual(actual, state) {
 		t.Fatalf("round trip changed session state: got %#v, want %#v", actual, state)
 	}
 }

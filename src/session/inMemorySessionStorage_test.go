@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func TestInMemorySessionStorageRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TryGetSession failed: %v", err)
 	}
-	if *actual != *state {
+	if !reflect.DeepEqual(actual, state) {
 		t.Fatalf("round trip changed session state: got %#v, want %#v", actual, state)
 	}
 }
@@ -69,6 +70,32 @@ func TestInMemorySessionStorageCopiesState(t *testing.T) {
 	}
 	if retrievedAgain.AccessToken != "original" {
 		t.Fatalf("stored state was mutated through a loaded value: %q", retrievedAgain.AccessToken)
+	}
+}
+
+func TestInMemorySessionStorageCopiesAuthorizationResults(t *testing.T) {
+	storage := CreateInMemorySessionStorage(60)
+	logger, cfg := inMemorySessionStorageTestDependencies()
+	state := &SessionState{
+		Id:                   "b59dde6d-c541-41e9-9026-aad0b4acf017",
+		AuthorizationResults: map[string]bool{"admin-policy": true},
+	}
+	if _, err := storage.StoreSession(logger, cfg, state.Id, state); err != nil {
+		t.Fatalf("StoreSession failed: %v", err)
+	}
+
+	retrieved, err := storage.TryGetSession(logger, cfg, state.Id)
+	if err != nil {
+		t.Fatalf("TryGetSession failed: %v", err)
+	}
+	retrieved.AuthorizationResults["admin-policy"] = false
+
+	retrievedAgain, err := storage.TryGetSession(logger, cfg, state.Id)
+	if err != nil {
+		t.Fatalf("second TryGetSession failed: %v", err)
+	}
+	if !retrievedAgain.AuthorizationResults["admin-policy"] {
+		t.Fatal("mutating retrieved authorization decisions changed stored session")
 	}
 }
 

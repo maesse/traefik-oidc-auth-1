@@ -106,7 +106,9 @@ func validateSessionTicket(toa *TraefikOidcAuth, ctx context.Context, sessionTic
 		return nil, nil, nil, nil
 	}
 
+	validationCacheKeyBefore := session.ValidationCacheKey
 	success, claims, err := toa.validateToken(ctx, session)
+	validationCacheUpdated := session.ValidationCacheKey != validationCacheKeyBefore
 
 	// Check if the session or IDP token expires soon
 	idpTokenExpiresSoon := false
@@ -168,6 +170,9 @@ func validateSessionTicket(toa *TraefikOidcAuth, ctx context.Context, sessionTic
 		}
 	}
 
+	if validationCacheUpdated {
+		return session, claims, session, nil
+	}
 	return session, claims, nil, nil
 }
 
@@ -187,21 +192,9 @@ func checkIdpTokenExpiresSoon(toa *TraefikOidcAuth, session *session.SessionStat
 }
 
 func (toa *TraefikOidcAuth) validateToken(ctx context.Context, session *session.SessionState) (bool, map[string]interface{}, error) {
-	var token string
-
-	// Little bit hacky. In case the request contains a custom AuthorizationHeader or Cookie, only AccessToken is used.
-	// See getSessionForRequest-function.
-	if session.Id == "AuthorizationHeader" || session.Id == "AuthorizationCookie" {
-		token = session.AccessToken
-	} else {
-		switch toa.Config.Provider.TokenValidation {
-		case "AccessToken", "Introspection":
-			token = session.AccessToken
-		case "IdToken":
-			token = session.IdToken
-		default:
-			return false, nil, errors.New(fmt.Sprintf("Invalid value '%s' for TokenValidation", toa.Config.Provider.TokenValidation))
-		}
+	token, err := toa.selectedValidationToken(session)
+	if err != nil {
+		return false, nil, err
 	}
 
 	if toa.Config.Provider.TokenValidation == "Introspection" {
@@ -209,6 +202,16 @@ func (toa *TraefikOidcAuth) validateToken(ctx context.Context, session *session.
 		ok, claims, err := toa.introspectToken(token)
 		stage.End()
 		return ok, claims, err
+	}
+
+	stage := beginProfileStage(ctx, "session.validation_cache")
+	found, cachedClaims, cacheErr := toa.tryValidatedSessionCache(session, token)
+	stage.End()
+	if found {
+		if cacheErr != nil {
+			return false, nil, cacheErr
+		}
+		return true, cachedClaims, nil
 	}
 
 	ok, claims, err := toa.validateTokenLocally(ctx, token)
@@ -233,20 +236,22 @@ func (toa *TraefikOidcAuth) validateToken(ctx context.Context, session *session.
 		claims = mergeClaims(claims, userInfoClaims)
 	}
 
+	toa.cacheValidatedSession(session, token, claims)
 	return ok, claims, err
 }
 
-func (toa *TraefikOidcAuth) storeSessionAndAttachCookie(session *session.SessionState, rw http.ResponseWriter) {
+func (toa *TraefikOidcAuth) storeSessionAndAttachCookie(session *session.SessionState, rw http.ResponseWriter) error {
 	sessionTicket, err := toa.SessionStorage.StoreSession(toa.logger, toa.Config, session.Id, session)
 	if err != nil {
 		toa.logger.Log(logging.LevelError, "Failed to store session: %s", err.Error())
 		http.Error(rw, err.Error(), http.StatusInternalServerError)
-		return
+		return err
 	}
 
 	toa.logger.Log(logging.LevelDebug, "Session stored. Id %s", session.Id)
 
 	setChunkedCookies(toa.Config, rw, getSessionCookieName(toa.Config), sessionTicket)
+	return nil
 }
 
 func createSessionCookie(config *config.Config) *http.Cookie {

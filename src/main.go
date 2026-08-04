@@ -40,6 +40,8 @@ type TraefikOidcAuth struct {
 	Lock                        sync.RWMutex
 	BypassAuthenticationRule    *rules.RequestCondition
 	RedirectUriWildcardsEnabled bool
+	validationCacheConfigKey    string
+	authorizationCachePolicyKey string
 }
 
 // Make sure we fetch oidc discovery document during first request - avoid race condition
@@ -68,6 +70,10 @@ func (toa *TraefikOidcAuth) EnsureOidcDiscovery() error {
 			}
 			if config.Provider.ValidAudience == "" {
 				config.Provider.ValidAudience = config.Provider.ClientId
+			}
+			toa.validationCacheConfigKey, err = toa.buildValidationConfigFingerprint()
+			if err != nil {
+				return err
 			}
 
 			toa.logger.Log(logging.LevelInfo, "OIDC Discovery successful. AuthEndPoint: %s", oidcDiscoveryDocument.AuthorizationEndpoint)
@@ -164,9 +170,31 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 		// If this request is using external authentication by using a header or custom cookie,
 		// we need to validate the authorization on every request.
 		// Ensure the session is authorized
+		authorizationCacheUpdated := false
 		if session.Id == "AuthorizationHeader" || session.Id == "AuthorizationCookie" || toa.Config.Authorization.CheckOnEveryRequest {
 			stage = beginProfileStage(req.Context(), "authorization")
 			session.IsAuthorized = isAuthorizedWithContext(req.Context(), toa.logger, toa.Config.Authorization, claims)
+			stage.End()
+		} else {
+			stage = beginProfileStage(req.Context(), "authorization.cache")
+			cachedDecision, found := toa.cachedAuthorizationDecision(session, claims)
+			stage.End()
+			if found {
+				session.IsAuthorized = cachedDecision
+			} else {
+				stage = beginProfileStage(req.Context(), "authorization")
+				session.IsAuthorized = isAuthorizedWithContext(req.Context(), toa.logger, toa.Config.Authorization, claims)
+				stage.End()
+				authorizationCacheUpdated = toa.cacheAuthorizationDecision(session, claims, session.IsAuthorized)
+			}
+		}
+
+		if updateSession || authorizationCacheUpdated {
+			stage = beginProfileStage(req.Context(), "session.store")
+			if err = toa.storeSessionAndAttachCookie(session, rw); err != nil {
+				stage.End()
+				return
+			}
 			stage.End()
 		}
 
@@ -185,12 +213,6 @@ func (toa *TraefikOidcAuth) ServeHTTP(rw http.ResponseWriter, req *http.Request)
 			profile.PublishServerTiming(rw)
 			http.Error(rw, err.Error(), http.StatusInternalServerError)
 			return
-		}
-
-		if updateSession {
-			stage = beginProfileStage(req.Context(), "session.store")
-			toa.storeSessionAndAttachCookie(session, rw)
-			stage.End()
 		}
 
 		// Forward the request
@@ -461,7 +483,11 @@ func (toa *TraefikOidcAuth) handleCallback(rw http.ResponseWriter, req *http.Req
 			ChallengeAttempted: state.IsChallenge,
 		}
 
-		toa.storeSessionAndAttachCookie(session, rw)
+		toa.cacheValidatedSession(session, usedToken, claims)
+		toa.cacheAuthorizationDecision(session, claims, isAuthorized)
+		if err := toa.storeSessionAndAttachCookie(session, rw); err != nil {
+			return
+		}
 
 		http.SetCookie(rw, &http.Cookie{
 			Name:     getCodeVerifierCookieName(toa.Config),

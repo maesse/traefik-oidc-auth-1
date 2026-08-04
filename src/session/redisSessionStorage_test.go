@@ -265,11 +265,16 @@ func TestRedisSessionStorageRoundTripExpirationAndDelete(t *testing.T) {
 	storage := newTestRedisStorage(t, server, 2, 60)
 	logger, cfg := redisStorageTestDependencies()
 	state := &SessionState{
-		Id:             "9a8799f4-f9f5-4e45-8da8-f54c17547ac2",
-		AccessToken:    "access-token",
-		RefreshToken:   "refresh-token",
-		IsAuthorized:   true,
-		TokenExpiresIn: 3600,
+		Id:                     "9a8799f4-f9f5-4e45-8da8-f54c17547ac2",
+		AccessToken:            "access-token",
+		RefreshToken:           "refresh-token",
+		IsAuthorized:           true,
+		TokenExpiresIn:         3600,
+		ValidationCacheKey:     "validation-key",
+		ValidatedExpiresAt:     time.Now().Add(time.Hour).Unix(),
+		ValidatedClaims:        map[string]interface{}{"sub": "user-1"},
+		ClaimsRevision:         "claims-revision",
+		AuthorizationResults:   map[string]bool{"admin-policy": true},
 	}
 
 	ticket, err := storage.StoreSession(logger, cfg, state.Id, state)
@@ -286,6 +291,12 @@ func TestRedisSessionStorageRoundTripExpirationAndDelete(t *testing.T) {
 	}
 	if retrieved.AccessToken != "access-token" {
 		t.Fatalf("AccessToken = %q, want stored value", retrieved.AccessToken)
+	}
+	if retrieved.ValidationCacheKey != state.ValidationCacheKey || retrieved.ClaimsRevision != state.ClaimsRevision {
+		t.Fatalf("validation cache metadata was not preserved: got %#v", retrieved)
+	}
+	if !retrieved.AuthorizationResults["admin-policy"] {
+		t.Fatalf("authorization decisions were not preserved: got %#v", retrieved.AuthorizationResults)
 	}
 
 	server.mu.Lock()
